@@ -171,7 +171,7 @@ DDPandoraPFANewAlgorithm::operator()(const std::vector<const edm4hep::MCParticle
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& mCalCollections,
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& lCalCollections,
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& lhCalCollections,
-                                     const std::vector<const edm4hep::CaloHitSimCaloHitLinkCollection*>&) const {
+                                     const std::vector<const edm4hep::CaloHitSimCaloHitLinkCollection*>& caloLinkCollections) const {
   try {
 
     std::vector<edm4hep::MCParticle> mcParticlesVector;
@@ -240,10 +240,17 @@ DDPandoraPFANewAlgorithm::operator()(const std::vector<const edm4hep::MCParticle
                                                              mCalHitCollectionsVector, lCalHitCollectionsVector,
                                                              lhCalHitCollectionsVector))
 
-    // PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
-    //                         m_pDDMCParticleCreator->CreateCaloHitToMCParticleRelationships(
-    //                             caloLinkCollections, m_pCaloHitCreator->GetCalorimeterHitVector(), eCalCollections,
-    //                             hCalCollections, mCalCollections, lCalCollections, lhCalCollections))
+    // Hit truth links. createCaloHits gave Pandora the address of each element of these local vectors, so the hit
+    // lookup table must be built from these same vectors. They stay unchanged until the end of this function, after
+    // ProcessEvent, so the addresses remain valid while Pandora uses them.
+    std::vector<const std::vector<edm4hep::CalorimeterHit>*> caloHitVectors{
+        &hCalHitCollectionsVector, &mCalHitCollectionsVector, &lCalHitCollectionsVector, &lhCalHitCollectionsVector};
+    for (const auto& [collectionName, eCalHits] : eCalHitCollectionsMap)
+      caloHitVectors.push_back(&eCalHits);
+
+    PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
+                            m_pDDMCParticleCreator->CreateCaloHitToMCParticleRelationships(
+                                caloLinkCollections, caloHitVectors, mcParticlesVector))
 
     PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=, PandoraApi::ProcessEvent(m_pPandora))
 
