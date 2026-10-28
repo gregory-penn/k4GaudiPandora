@@ -30,9 +30,12 @@
 #include <edm4hep/Track.h>
 #include <edm4hep/TrackMCParticleLinkCollection.h>
 
+#include <podio/ObjectID.h>
+
 #include <cmath>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -45,6 +48,17 @@ DDMCParticleCreator::DDMCParticleCreator(const Settings& settings, pandora::Pand
 
 pandora::StatusCode
 DDMCParticleCreator::CreateMCParticles(const std::vector<edm4hep::MCParticle>& mcParticleCollections) const {
+
+  // Pandora identifies each MCParticle by the address of its element in mcParticleCollections. A daughter returned by
+  // getDaughters() is a different object at a different address, so look up its element by ObjectID instead.
+  std::unordered_map<podio::ObjectID, const edm4hep::MCParticle*> addressOf;
+  for (const auto& mcParticle : mcParticleCollections) {
+    addressOf.emplace(mcParticle.getObjectID(), &mcParticle);
+    m_algorithm.debug() << "addressOf: ObjectID " << mcParticle.getObjectID() << " (PDG " << mcParticle.getPDG()
+                        << ") -> " << &mcParticle << " (address given to Pandora)" << endmsg;
+  }
+
+  unsigned int nRelationships(0), nDaughtersNotFound(0);
 
   for (const auto& mcParticle : mcParticleCollections) {
     PandoraApi::MCParticle::Parameters mcParticleParameters;
@@ -64,10 +78,27 @@ DDMCParticleCreator::CreateMCParticles(const std::vector<edm4hep::MCParticle>& m
 
     // Create parent-daughter relationships
     for (const auto& daughter : mcParticle.getDaughters()) {
+      const auto iter = addressOf.find(daughter.getObjectID());
+
+      if (addressOf.end() == iter) {
+        m_algorithm.debug() << "parent " << &mcParticle << " -> daughter ObjectID " << daughter.getObjectID()
+                            << ": old address " << &daughter << ", not among the input MCParticles, skipped" << endmsg;
+        ++nDaughtersNotFound;
+        continue;
+      }
+
+      m_algorithm.debug() << "parent " << &mcParticle << " -> daughter ObjectID " << daughter.getObjectID()
+                          << " (PDG " << daughter.getPDG() << "): old address " << &daughter << ", new address "
+                          << iter->second << endmsg;
+
       PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
-                              PandoraApi::SetMCParentDaughterRelationship(m_pandora, &mcParticle, &daughter))
+                              PandoraApi::SetMCParentDaughterRelationship(m_pandora, &mcParticle, iter->second))
+      ++nRelationships;
     }
   }
+
+  m_algorithm.debug() << "MCParticle parent-daughter relationships: " << nRelationships << " set, "
+                      << nDaughtersNotFound << " daughters not among the input MCParticles" << endmsg;
 
   return pandora::STATUS_CODE_SUCCESS;
 }
