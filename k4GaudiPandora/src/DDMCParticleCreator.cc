@@ -33,6 +33,7 @@
 #include <podio/ObjectID.h>
 
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
 #include <unordered_map>
@@ -170,11 +171,15 @@ pandora::StatusCode DDMCParticleCreator::CreateCaloHitToMCParticleRelationships(
 
   // Table A, hits. Pandora identifies each calorimeter hit by the address of its element in one of the hit vectors
   // that DDPandoraPFANewAlgorithm handed to the calo hit creator (getCommonCaloHitProperties: m_pParentAddress = &hit).
-  // A hit returned by a link is a different object at a different address, so look up its element by ObjectID.
-  std::unordered_map<podio::ObjectID, const edm4hep::CalorimeterHit*> hitAddressOf;
+  // A hit returned by a link is a different object at a different address, so look up its element by the hit itself.
+  // The key is the edm4hep::CalorimeterHit handle: its std::hash and operator== use the address of the hit's stored
+  // data (m_obj), which the handle in the vector and the handle returned by the link share. The ObjectID cannot be the
+  // key: hit collections made during the job have no collection ID yet (ffffffff), so ECAL hit 0 and HCAL hit 0 would
+  // both have ObjectID ffffffff|0, and emplace would keep only the first of them.
+  std::unordered_map<edm4hep::CalorimeterHit, const edm4hep::CalorimeterHit*> hitAddressOf;
   for (const HitVector* const pHitVector : calorimeterHitVectors) {
     for (const auto& caloHit : *pHitVector)
-      hitAddressOf.emplace(caloHit.getObjectID(), &caloHit);
+      hitAddressOf.emplace(caloHit, &caloHit);
   }
 
   // Table B, MCParticles. Same as in CreateMCParticles: ObjectID -> address of the element given to Pandora.
@@ -195,10 +200,14 @@ pandora::StatusCode DDMCParticleCreator::CreateCaloHitToMCParticleRelationships(
       try {
         // Step 1: find the address Pandora was given for this hit
         const edm4hep::CalorimeterHit caloHit = caloHitLink.getFrom();
-        const auto hitIter = hitAddressOf.find(caloHit.getObjectID());
+        const auto hitIter = hitAddressOf.find(caloHit);
+
+        // "hit key" is the value the table looks the hit up by: std::hash<edm4hep::CalorimeterHit>, which hashes the
+        // address of the hit's stored data (m_obj). With libstdc++ the hash of an address is the address itself.
+        const auto hitKey = std::hash<edm4hep::CalorimeterHit>{}(caloHit);
 
         if (hitAddressOf.end() == hitIter) {
-          m_algorithm.debug() << "link " << nLinks << ": hit ObjectID " << caloHit.getObjectID()
+          m_algorithm.debug() << "link " << nLinks << ": hit key 0x" << std::hex << hitKey << std::dec
                               << " was not given to Pandora, skipped" << endmsg;
           ++nHitsNotFound;
           continue;
@@ -206,7 +215,7 @@ pandora::StatusCode DDMCParticleCreator::CreateCaloHitToMCParticleRelationships(
 
         // Step 2: the simulated hit holds the true energy contributions, one per (MCParticle, Geant4 step)
         const edm4hep::SimCalorimeterHit simHit = caloHitLink.getTo();
-        m_algorithm.debug() << "link " << nLinks << ": hit ObjectID " << caloHit.getObjectID() << " -> address "
+        m_algorithm.debug() << "link " << nLinks << ": hit key 0x" << std::hex << hitKey << std::dec << " -> address "
                             << hitIter->second << ", sim hit ObjectID " << simHit.getObjectID() << " with "
                             << simHit.getContributions().size() << " contributions" << endmsg;
 
