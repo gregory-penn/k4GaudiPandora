@@ -164,48 +164,108 @@ DDMCParticleCreator::CreateTrackToMCParticleRelationships(const TrackMCLinkColle
 //------------------------------------------------------------------------------------------------------------------------------------------
 
 pandora::StatusCode DDMCParticleCreator::CreateCaloHitToMCParticleRelationships(
-    const CaloHitSimCaloHitLinkCollectionVector& caloRelCollections, const HitVector& calorimeterHitVector) const {
-  throw std::runtime_error("DDMCParticleCreator::CreateCaloHitToMCParticleRelationships not implemented yet");
-  using MCParticleToEnergyWeightMap = std::map<const edm4hep::MCParticle*, float>;
-  MCParticleToEnergyWeightMap mcParticleToEnergyWeightMap;
+    const CaloHitSimCaloHitLinkCollectionVector& caloRelCollections,
+    const std::vector<const HitVector*>& calorimeterHitVectors,
+    const std::vector<edm4hep::MCParticle>& mcParticleVector) const {
 
-  for (const auto& hitRelCollection : caloRelCollections) {
-    for (const auto& caloHit : calorimeterHitVector) {
+  // Table A, hits. Pandora identifies each calorimeter hit by the address of its element in one of the hit vectors
+  // that DDPandoraPFANewAlgorithm handed to the calo hit creator (getCommonCaloHitProperties: m_pParentAddress = &hit).
+  // A hit returned by a link is a different object at a different address, so look up its element by ObjectID.
+  std::unordered_map<podio::ObjectID, const edm4hep::CalorimeterHit*> hitAddressOf;
+  for (const HitVector* const pHitVector : calorimeterHitVectors) {
+    for (const auto& caloHit : *pHitVector)
+      hitAddressOf.emplace(caloHit.getObjectID(), &caloHit);
+  }
+
+  // Table B, MCParticles. Same as in CreateMCParticles: ObjectID -> address of the element given to Pandora.
+  std::unordered_map<podio::ObjectID, const edm4hep::MCParticle*> particleAddressOf;
+  for (const auto& mcParticle : mcParticleVector)
+    particleAddressOf.emplace(mcParticle.getObjectID(), &mcParticle);
+
+  m_algorithm.debug() << "CaloHit truth: " << hitAddressOf.size() << " hits and " << particleAddressOf.size()
+                      << " MCParticles in the lookup tables" << endmsg;
+
+  unsigned int nLinks(0), nHitsNotFound(0), nParticlesNotFound(0), nRelationships(0);
+
+  // Each link connects one CalorimeterHit (its "from" side) to one SimCalorimeterHit (its "to" side)
+  for (const auto* const pLinkCollection : caloRelCollections) {
+    for (const auto& caloHitLink : *pLinkCollection) {
+      ++nLinks;
+
       try {
-        for (const auto&& caloHitLink : *hitRelCollection) {
-          try {
-            mcParticleToEnergyWeightMap.clear();
+        // Step 1: find the address Pandora was given for this hit
+        const edm4hep::CalorimeterHit caloHit = caloHitLink.getFrom();
+        const auto hitIter = hitAddressOf.find(caloHit.getObjectID());
 
-            if (caloHitLink.get<edm4hep::CalorimeterHit>().id() != caloHit.id())
-              continue;
-
-            const auto& simHit = caloHitLink.get<edm4hep::SimCalorimeterHit>();
-            for (const auto& conb : simHit.getContributions()) {
-              const auto& ipa = conb.getParticle();
-              float ien = conb.getEnergy();
-
-              mcParticleToEnergyWeightMap[&ipa] += ien;
-            }
-
-            for (const auto& mcPToE : mcParticleToEnergyWeightMap) {
-              PANDORA_THROW_RESULT_IF(
-                  pandora::STATUS_CODE_SUCCESS, !=,
-                  PandoraApi::SetCaloHitToMCParticleRelationship(m_pandora, &caloHit, mcPToE.first, mcPToE.second))
-            }
-          } catch (const pandora::StatusCodeException& statusCodeException) {
-            m_algorithm.error() << "Failed to extract calo hit to mc particle relationship: "
-                                << statusCodeException.ToString() << endmsg;
-          } catch (const std::exception& exception) {
-            m_algorithm.warning() << "Failed to extract calo hit to mc particle relationship: " << exception.what()
-                                  << endmsg;
-          }
+        if (hitAddressOf.end() == hitIter) {
+          m_algorithm.debug() << "link " << nLinks << ": hit ObjectID " << caloHit.getObjectID()
+                              << " was not given to Pandora, skipped" << endmsg;
+          ++nHitsNotFound;
+          continue;
         }
+
+        // Step 2: the simulated hit holds the true energy contributions, one per (MCParticle, Geant4 step)
+        const edm4hep::SimCalorimeterHit simHit = caloHitLink.getTo();
+        m_algorithm.debug() << "link " << nLinks << ": hit ObjectID " << caloHit.getObjectID() << " -> address "
+                            << hitIter->second << ", sim hit ObjectID " << simHit.getObjectID() << " with "
+                            << simHit.getContributions().size() << " contributions" << endmsg;
+
+        // Energies of this hit: the reconstructed hit (after digitisation and calibration) and the simulated hit (true
+        // deposited energy, which should equal the sum of its contributions printed below)
+        m_algorithm.debug() << "    hit energy: reconstructed " << caloHit.getEnergy() << " GeV, simulated "
+                            << simHit.getEnergy() << " GeV" << endmsg;
+
+        // Steps 3 and 4: sum the true energy per MCParticle, keyed by the address Pandora was given for that particle.
+        // "old address" is what the previous code used (&ipa): the address of the local copy returned by getParticle().
+        std::map<const edm4hep::MCParticle*, float> energyByParticle;
+        float contributionEnergySum(0.f);
+        for (const auto& contribution : simHit.getContributions()) {
+          contributionEnergySum += contribution.getEnergy();
+          const edm4hep::MCParticle particle = contribution.getParticle();
+          const auto particleIter = particleAddressOf.find(particle.getObjectID());
+
+          if (particleAddressOf.end() == particleIter) {
+            m_algorithm.debug() << "    contribution from particle ObjectID " << particle.getObjectID() << ", "
+                                << contribution.getEnergy() << " GeV, not among the input MCParticles, skipped"
+                                << endmsg;
+            ++nParticlesNotFound;
+            continue;
+          }
+
+          m_algorithm.debug() << "    contribution from particle ObjectID " << particle.getObjectID() << " (PDG "
+                              << particle.getPDG() << "), " << contribution.getEnergy() << " GeV: old address "
+                              << &particle << ", new address " << particleIter->second << endmsg;
+          energyByParticle[particleIter->second] += contribution.getEnergy();
+        }
+
+        // Sum over all contributions, including skipped ones; compare with the simulated hit energy printed above
+        m_algorithm.debug() << "    sum of contributions: " << contributionEnergySum << " GeV (simulated hit energy "
+                            << simHit.getEnergy() << " GeV)" << endmsg;
+
+        // Step 5: one relationship per (hit, MCParticle), weighted by the summed true energy. If several links point at
+        // the same hit, Pandora adds the weights for the same particle (MCManager::SetUidToMCParticleRelationship).
+        for (const auto& [pParticle, energy] : energyByParticle) {
+          m_algorithm.debug() << "    -> relationship: hit " << hitIter->second << ", particle " << pParticle << ", "
+                              << energy << " GeV" << endmsg;
+          PANDORA_THROW_RESULT_IF(
+              pandora::STATUS_CODE_SUCCESS, !=,
+              PandoraApi::SetCaloHitToMCParticleRelationship(m_pandora, hitIter->second, pParticle, energy))
+          ++nRelationships;
+        }
+      } catch (const pandora::StatusCodeException& statusCodeException) {
+        m_algorithm.error() << "Failed to extract calo hit to mc particle relationship: "
+                            << statusCodeException.ToString() << endmsg;
       } catch (const std::exception& exception) {
-        m_algorithm.debug() << "Failed to extract calo hit to mc particle relationships collection: "
-                            << exception.what() << endmsg;
+        m_algorithm.warning() << "Failed to extract calo hit to mc particle relationship: " << exception.what()
+                              << endmsg;
       }
     }
   }
+
+  m_algorithm.debug() << "CaloHit truth summary: " << nLinks << " links read, " << nHitsNotFound
+                      << " with a hit not given to Pandora, " << nParticlesNotFound
+                      << " contributions from MCParticles not among the input MCParticles, " << nRelationships
+                      << " hit to MCParticle relationships set" << endmsg;
 
   return pandora::STATUS_CODE_SUCCESS;
 }

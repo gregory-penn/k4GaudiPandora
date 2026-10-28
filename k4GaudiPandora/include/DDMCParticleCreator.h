@@ -74,14 +74,16 @@ public:
                                                            const TrackVector& trackVector) const;
 
   /**
-   *  @brief  Create CaloHit to MCParticle relationships
+   *  @brief  Create CaloHit to MCParticle relationships, weighted by the true energy each MCParticle deposited
    *
-   *  @param  collectionMaps The collection map containing input data
-   *  @param  calorimeterHitVector Vector of calorimeter hits
+   *  @param  caloRelCollections the CalorimeterHit to SimCalorimeterHit link collections
+   *  @param  calorimeterHitVectors the calorimeter hit vectors whose element addresses were given to Pandora
+   *  @param  mcParticleVector the MCParticles whose element addresses were given to Pandora
    */
   pandora::StatusCode
   CreateCaloHitToMCParticleRelationships(const CaloHitSimCaloHitLinkCollectionVector& caloRelCollections,
-                                         const HitVector& calorimeterHitVector) const;
+                                         const std::vector<const HitVector*>& calorimeterHitVectors,
+                                         const std::vector<edm4hep::MCParticle>& mcParticleVector) const;
 
 private:
   const Settings m_settings;           ///< The mc particle creator settings
