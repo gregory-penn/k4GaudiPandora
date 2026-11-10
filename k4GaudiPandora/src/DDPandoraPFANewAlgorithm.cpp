@@ -165,7 +165,7 @@ DDPandoraPFANewAlgorithm::operator()(const std::vector<const edm4hep::MCParticle
                                      const std::vector<const edm4hep::VertexCollection*>& splitCollections,
                                      const std::vector<const edm4hep::VertexCollection*>& v0Collections,
                                      const std::vector<const edm4hep::TrackCollection*>& trackCollections,
-                                     const std::vector<const edm4hep::TrackerHitSimTrackerHitLinkCollection*>&,
+                                     const std::vector<const edm4hep::TrackMCParticleLinkCollection*>& trackLinkCollections,
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& eCalCollections,
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& hCalCollections,
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& mCalCollections,
@@ -191,9 +191,15 @@ DDPandoraPFANewAlgorithm::operator()(const std::vector<const edm4hep::MCParticle
     }
     PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=, m_pTrackCreator->CreateTracks(tracksVector))
 
-    // PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
-    //                         m_pDDMCParticleCreator->CreateTrackToMCParticleRelationships(
-    //                             trackerHitLinkCollections, m_pTrackCreator->GetTrackVector(), trackCollections))
+    // Track truth links (RelTrackCollections, e.g. TruthTrackRelationsKF). CreateTracks gave Pandora the address of each
+    // element of tracksVector, so the track lookup table is built from that same vector; it stays unchanged until the
+    // end of this function, after ProcessEvent. GetTrackVector() holds copies of the tracks Pandora accepted, used only
+    // to count the links whose track Pandora dropped. Must run after CreateMCParticles and CreateTracks, before
+    // ProcessEvent (where Pandora attaches the links to its tracks).
+    PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
+                            m_pDDMCParticleCreator->CreateTrackToMCParticleRelationships(
+                                trackLinkCollections, tracksVector, m_pTrackCreator->GetTrackVector(),
+                                mcParticlesVector))
 
     std::map<std::string, std::vector<edm4hep::CalorimeterHit>> eCalHitCollectionsMap;
     const auto eCalHitCollectionsNames = inputLocations("ECalCaloHitCollections");

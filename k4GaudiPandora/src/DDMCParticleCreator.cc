@@ -37,6 +37,7 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -104,60 +105,97 @@ DDMCParticleCreator::CreateMCParticles(const std::vector<edm4hep::MCParticle>& m
   return pandora::STATUS_CODE_SUCCESS;
 }
 
-pandora::StatusCode
-DDMCParticleCreator::CreateTrackToMCParticleRelationships(const TrackMCLinkCollectionVector& trackRelCollections,
-                                                          const TrackVector& trackVector) const {
-  throw std::runtime_error("DDMCParticleCreator::CreateTrackToMCParticleRelationships not implemented yet");
-  for (const auto& trackRelCollection : trackRelCollections) {
-    for (const auto& pTrack : trackVector) {
+pandora::StatusCode DDMCParticleCreator::CreateTrackToMCParticleRelationships(
+    const TrackMCLinkCollectionVector& trackRelCollections, const TrackVector& tracksGivenToCreator,
+    const TrackVector& tracksCreatedInPandora, const std::vector<edm4hep::MCParticle>& mcParticleVector) const {
+
+  // Table A, tracks. Pandora identifies each track by the address of its element in the vector handed to the track
+  // creator (DDTrackCreatorILD::CreateTracks: m_pParentAddress = &pTrack). A track returned by a link is a different
+  // object at a different address, so look up its element by the track itself. The key is the edm4hep::Track handle:
+  // its std::hash and operator== use the address of the track's stored data (m_obj), which the handle in the vector
+  // and the handle returned by the link share. The ObjectID cannot be the key: track collections made during the job
+  // (e.g. TruthTracksKF) have no collection ID yet (ffffffff).
+  std::unordered_map<edm4hep::Track, const edm4hep::Track*> trackAddressOf;
+  for (const auto& track : tracksGivenToCreator)
+    trackAddressOf.emplace(track, &track);
+
+  // Set C, the tracks Pandora accepted. CreateTracks skips some tracks (too few hits, failed track-state extraction);
+  // a link to such a track is harmless (Pandora never looks its address up) but has no effect, so count it apart.
+  // GetTrackVector() holds copies of the handles; they compare equal to the originals (same m_obj).
+  std::unordered_set<edm4hep::Track> tracksInPandora(tracksCreatedInPandora.begin(), tracksCreatedInPandora.end());
+
+  // Table B, MCParticles. Same as in CreateMCParticles: ObjectID -> address of the element given to Pandora. The
+  // MCParticles come from the input file, so their ObjectIDs are unique.
+  std::unordered_map<podio::ObjectID, const edm4hep::MCParticle*> particleAddressOf;
+  for (const auto& mcParticle : mcParticleVector)
+    particleAddressOf.emplace(mcParticle.getObjectID(), &mcParticle);
+
+  m_algorithm.debug() << "Track truth: " << trackAddressOf.size() << " tracks given to the track creator, "
+                      << tracksInPandora.size() << " accepted by Pandora, " << particleAddressOf.size()
+                      << " MCParticles in the lookup table" << endmsg;
+
+  unsigned int nLinks(0), nTracksNotFound(0), nTracksDropped(0), nParticlesNotFound(0), nRelationships(0);
+
+  // Each link connects one Track (its "from" side) to one MCParticle (its "to" side), with a weight
+  for (const auto* const pLinkCollection : trackRelCollections) {
+    for (const auto& trackLink : *pLinkCollection) {
+      ++nLinks;
+
       try {
-        // Get reconstructed momentum at dca
-        const auto& trackState = pTrack.getTrackStates(0);
-        const pandora::Helix helixFit(trackState.phi, trackState.D0, trackState.Z0, trackState.omega,
-                                      trackState.tanLambda, m_bField);
-        const float recoMomentum = helixFit.GetMomentum().GetMagnitude();
+        // Step 1: find the address Pandora was given for this track
+        const edm4hep::Track track = trackLink.getFrom();
+        const auto trackIter = trackAddressOf.find(track);
 
-        // APS: I am not sure why we chose the best MCParticle per trackRelationCollection, but this was like this from
-        // the start, and we only have one track collection, so it doesn't matter...
-
-        // Use momentum magnitude to identify best MC particle
-        const edm4hep::MCParticle* pBestMCParticle = nullptr;
-        float bestDeltaMomentum = std::numeric_limits<float>::max();
-
-        for (const auto&& trackMCRel : *trackRelCollection) {
-          // if the track relation does not match the track, continue
-          if (trackMCRel.get<edm4hep::Track>().id() != pTrack.id())
-            continue;
-
-          auto const& mcParticle = trackMCRel.get<edm4hep::MCParticle>();
-
-          const float trueMomentum = pandora::CartesianVector(mcParticle.getMomentum()[0], mcParticle.getMomentum()[1],
-                                                              mcParticle.getMomentum()[2])
-                                         .GetMagnitude();
-          const float deltaMomentum = std::fabs(recoMomentum - trueMomentum);
-
-          if (deltaMomentum < bestDeltaMomentum) {
-            pBestMCParticle = &mcParticle;
-            bestDeltaMomentum = deltaMomentum;
-          }
-        }
-
-        if (pBestMCParticle == nullptr) {
-          m_algorithm.warning() << "No suitable MC particle found for track association." << endmsg;
+        if (trackAddressOf.end() == trackIter) {
+          m_algorithm.debug() << "track link " << nLinks << ": track not in the input track collections, skipped"
+                              << endmsg;
+          ++nTracksNotFound;
           continue;
         }
 
-        PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
-                                PandoraApi::SetTrackToMCParticleRelationship(m_pandora, &pTrack, pBestMCParticle))
+        // Step 2: find the address Pandora was given for the linked MCParticle
+        const edm4hep::MCParticle particle = trackLink.getTo();
+        const auto particleIter = particleAddressOf.find(particle.getObjectID());
 
+        if (particleAddressOf.end() == particleIter) {
+          m_algorithm.debug() << "track link " << nLinks << ": particle ObjectID " << particle.getObjectID()
+                              << " not among the input MCParticles, skipped" << endmsg;
+          ++nParticlesNotFound;
+          continue;
+        }
+
+        // Step 3: the relationship. Pandora sums the weights per MCParticle and later picks the largest
+        // (MCParticleHelper::GetMainMCParticle); TruthTracking writes one link per track with weight 1.
+        const bool accepted(tracksInPandora.count(track) > 0);
+        if (!accepted)
+          ++nTracksDropped;
+
+        m_algorithm.debug() << "track link " << nLinks << ": track " << trackIter->second << " ("
+                            << track.getTrackerHits().size() << " hits"
+                            << (accepted ? "" : ", NOT accepted by Pandora's track creator") << ") -> particle ObjectID "
+                            << particle.getObjectID() << " (PDG " << particle.getPDG() << "), address "
+                            << particleIter->second << ", weight " << trackLink.getWeight() << endmsg;
+
+        PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=,
+                                PandoraApi::SetTrackToMCParticleRelationship(m_pandora, trackIter->second,
+                                                                             particleIter->second,
+                                                                             trackLink.getWeight()))
+        ++nRelationships;
       } catch (const pandora::StatusCodeException& statusCodeException) {
-        m_algorithm.error() << "Failed to extract track to MC particle relationship: " << statusCodeException.ToString()
-                            << endmsg;
+        m_algorithm.error() << "Failed to extract track to mc particle relationship: "
+                            << statusCodeException.ToString() << endmsg;
       } catch (const std::exception& exception) {
-        m_algorithm.warning() << "Exception encountered: " << exception.what() << endmsg;
+        m_algorithm.warning() << "Failed to extract track to mc particle relationship: " << exception.what()
+                              << endmsg;
       }
     }
   }
+
+  m_algorithm.debug() << "Track truth summary: " << nLinks << " links read, " << nTracksNotFound
+                      << " with a track not in the input track collections, " << nParticlesNotFound
+                      << " with an MCParticle not among the input MCParticles, " << nRelationships
+                      << " track to MCParticle relationships set, of which " << nTracksDropped
+                      << " for tracks Pandora's track creator did not accept (no effect)" << endmsg;
 
   return pandora::STATUS_CODE_SUCCESS;
 }

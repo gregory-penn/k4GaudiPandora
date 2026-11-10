@@ -28,7 +28,7 @@
 
 #include <edm4hep/CalorimeterHitCollection.h>
 #include <edm4hep/ClusterCollection.h>
-#include <edm4hep/TrackerHitSimTrackerHitLinkCollection.h>
+#include <edm4hep/TrackMCParticleLinkCollection.h>
 #include <edm4hep/VertexCollection.h>
 
 #include <Gaudi/Property.h>
@@ -55,7 +55,7 @@ struct DDPandoraPFANewAlgorithm final
           const std::vector<const edm4hep::VertexCollection*>&, const std::vector<const edm4hep::VertexCollection*>&,
           const std::vector<const edm4hep::VertexCollection*>&, const std::vector<const edm4hep::VertexCollection*>&,
           const std::vector<const edm4hep::TrackCollection*>&,
-          const std::vector<const edm4hep::TrackerHitSimTrackerHitLinkCollection*>&,
+          const std::vector<const edm4hep::TrackMCParticleLinkCollection*>&,
           const std::vector<const edm4hep::CalorimeterHitCollection*>&,
           const std::vector<const edm4hep::CalorimeterHitCollection*>&,
           const std::vector<const edm4hep::CalorimeterHitCollection*>&,
@@ -131,7 +131,7 @@ public:
              const std::vector<const edm4hep::VertexCollection*>& splitCollections,
              const std::vector<const edm4hep::VertexCollection*>& v0Collections,
              const std::vector<const edm4hep::TrackCollection*>& trackCollections,
-             const std::vector<const edm4hep::TrackerHitSimTrackerHitLinkCollection*>& trackerHitLinkCollections,
+             const std::vector<const edm4hep::TrackMCParticleLinkCollection*>& trackLinkCollections,
              const std::vector<const edm4hep::CalorimeterHitCollection*>& eCalCollections,
              const std::vector<const edm4hep::CalorimeterHitCollection*>& hCalCollections,
              const std::vector<const edm4hep::CalorimeterHitCollection*>& mCalCollections,

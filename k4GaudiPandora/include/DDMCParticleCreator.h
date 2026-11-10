@@ -65,13 +65,18 @@ public:
   pandora::StatusCode CreateMCParticles(const std::vector<edm4hep::MCParticle>& mcParticleCollections) const;
 
   /**
-   *  @brief  Create Track to MCParticle relationships
+   *  @brief  Create Track to MCParticle relationships, one per link, weighted by the link weight
    *
-   *  @param  collectionMaps The collection map containing input data
-   *  @param  trackVector Vector of reconstructed tracks
+   *  @param  trackRelCollections the Track to MCParticle link collections (e.g. TruthTrackRelationsKF)
+   *  @param  tracksGivenToCreator the track vector whose element addresses were given to Pandora (CreateTracks)
+   *  @param  tracksCreatedInPandora the tracks Pandora accepted (copies, DDTrackCreatorBase::GetTrackVector), only used
+   *          to count links whose track Pandora dropped
+   *  @param  mcParticleVector the MCParticles whose element addresses were given to Pandora
    */
   pandora::StatusCode CreateTrackToMCParticleRelationships(const TrackMCLinkCollectionVector& trackRelCollections,
-                                                           const TrackVector& trackVector) const;
+                                                           const TrackVector& tracksGivenToCreator,
+                                                           const TrackVector& tracksCreatedInPandora,
+                                                           const std::vector<edm4hep::MCParticle>& mcParticleVector) const;
 
   /**
    *  @brief  Create CaloHit to MCParticle relationships, weighted by the true energy each MCParticle deposited
