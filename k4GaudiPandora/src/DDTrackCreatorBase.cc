@@ -311,10 +311,33 @@ void DDTrackCreatorBase::GetTrackStates(const edm4hep::Track& pTrack,
 
   const edm4hep::TrackState stateAtLastHit(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtLastHit));
   this->CopyTrackState(stateAtLastHit, trackParameters.m_trackStateAtEnd);
-  // The omega of the calorimeter state may have been computed with the field at the calorimeter face, not m_bField:
-  // CopyTrackStateAtCalorimeterChecked then takes the momentum magnitude from the last-hit state instead
-  this->CopyTrackStateAtCalorimeterChecked(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtCalorimeter),
-                                           stateAtLastHit, trackParameters.m_trackStateAtCalorimeter);
+  // A track has no AtCalorimeter state when its extrapolation to the calorimeter face failed, e.g. a low-pT track that
+  // curls up inside the tracker (a looper). That is not an error: use the last-hit state in its place, since pandora
+  // requires m_trackStateAtCalorimeter to be set. Whether the track counts as reaching the calorimeter is decided
+  // separately, from its hits and momentum, by TrackReachesECAL.
+  bool hasStateAtCalorimeter(false);
+  for (const auto& trackState : pEndTrack.getTrackStates()) {
+    if (trackState.location == edm4hep::TrackState::AtCalorimeter) {
+      hasStateAtCalorimeter = true;
+      break;
+    }
+  }
+
+  if (hasStateAtCalorimeter) {
+    // The omega of the calorimeter state may have been computed with the field at the calorimeter face, not
+    // m_bField: CopyTrackStateAtCalorimeterChecked then takes the momentum magnitude from the last-hit state instead
+    this->CopyTrackStateAtCalorimeterChecked(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtCalorimeter),
+                                             stateAtLastHit, trackParameters.m_trackStateAtCalorimeter);
+  } else {
+    m_algorithm.debug() << "Track without an AtCalorimeter state (pT at DCA "
+                        << std::hypot(trackParameters.m_momentumAtDca.Get().GetX(),
+                                      trackParameters.m_momentumAtDca.Get().GetY())
+                        << " GeV, tanLambda " << pTrackState.tanLambda << ", last hit at r "
+                        << std::hypot(stateAtLastHit.referencePoint[0], stateAtLastHit.referencePoint[1]) << " z "
+                        << stateAtLastHit.referencePoint[2] << " mm): using the last-hit state as the calorimeter state"
+                        << endmsg;
+    this->CopyTrackState(stateAtLastHit, trackParameters.m_trackStateAtCalorimeter);
+  }
 
   trackParameters.m_isProjectedToEndCap =
       ((std::fabs(trackParameters.m_trackStateAtCalorimeter.Get().GetPosition().GetZ()) < m_settings.m_eCalEndCapInnerZ)
