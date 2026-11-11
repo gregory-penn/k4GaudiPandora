@@ -311,10 +311,10 @@ void DDTrackCreatorBase::GetTrackStates(const edm4hep::Track& pTrack,
 
   const edm4hep::TrackState stateAtLastHit(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtLastHit));
   this->CopyTrackState(stateAtLastHit, trackParameters.m_trackStateAtEnd);
-  // The omega of the calorimeter state was computed with the field at the calorimeter face, not m_bField: take only
-  // its position and direction, and the momentum magnitude from the last-hit state (see CopyTrackStateAtCalorimeter)
-  this->CopyTrackStateAtCalorimeter(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtCalorimeter), stateAtLastHit,
-                                    trackParameters.m_trackStateAtCalorimeter);
+  // The omega of the calorimeter state may have been computed with the field at the calorimeter face, not m_bField:
+  // CopyTrackStateAtCalorimeterChecked then takes the momentum magnitude from the last-hit state instead
+  this->CopyTrackStateAtCalorimeterChecked(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtCalorimeter),
+                                           stateAtLastHit, trackParameters.m_trackStateAtCalorimeter);
 
   trackParameters.m_isProjectedToEndCap =
       ((std::fabs(trackParameters.m_trackStateAtCalorimeter.Get().GetPosition().GetZ()) < m_settings.m_eCalEndCapInnerZ)
@@ -355,12 +355,12 @@ void DDTrackCreatorBase::GetTrackStatesAtCalo(edm4hep::Track const& track,
   // The extrapolations were done upstream, so every track state at the calorimeter that the input
   // track carries is passed on and pandora is left to choose between them.
   m_algorithm.verbose() << "Passing on " << statesAtCalo.size() << " track state(s) at the calorimeter" << endmsg;
-  // Momentum magnitude from the last-hit state, as in GetTrackStates (same choice of track segment)
+  // Last-hit state for CopyTrackStateAtCalorimeterChecked, as in GetTrackStates (same choice of track segment)
   const auto& endTrack = track.getTracks().empty() ? track : track.getTracks().back();
   const edm4hep::TrackState stateAtLastHit(getEDM4hepTrackState(endTrack, edm4hep::TrackState::AtLastHit));
   for (const auto& stateAtCalo : statesAtCalo) {
     pandora::InputTrackState pandoraTrackState;
-    this->CopyTrackStateAtCalorimeter(stateAtCalo, stateAtLastHit, pandoraTrackState);
+    this->CopyTrackStateAtCalorimeterChecked(stateAtCalo, stateAtLastHit, pandoraTrackState);
     trackParameters.m_trackStates.push_back(pandoraTrackState);
   }
 #else
@@ -569,6 +569,37 @@ void DDTrackCreatorBase::CopyTrackStateAtCalorimeter(const edm4hep::TrackState& 
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
+void DDTrackCreatorBase::CopyTrackStateAtCalorimeterChecked(const edm4hep::TrackState& stateAtCalo,
+                                                            const edm4hep::TrackState& stateAtLastHit,
+                                                            pandora::InputTrackState& inputTrackState) const {
+  // DD4hep field at the reference point of the calorimeter state (DD4hep lengths in dd4hep::mm units)
+  const double position[3] = {stateAtCalo.referencePoint[0] * dd4hep::mm, stateAtCalo.referencePoint[1] * dd4hep::mm,
+                              stateAtCalo.referencePoint[2] * dd4hep::mm};
+  double bFieldAtCalo[3] = {0., 0., 0.};
+  dd4hep::Detector::getInstance().field().magneticField(position, bFieldAtCalo);
+  const double bzAtCalo(bFieldAtCalo[2] / dd4hep::tesla);
+
+  // Signed comparison: a reversed field at the face (return field) counts as different
+  const double relativeDifference(std::fabs(bzAtCalo - m_settings.m_bField) / std::fabs(m_settings.m_bField));
+  const bool fieldMatches((m_settings.m_caloStateFieldTolerance >= 0.f) &&
+                          (relativeDifference <= m_settings.m_caloStateFieldTolerance));
+
+  m_algorithm.debug() << "Track state at calorimeter (" << stateAtCalo.referencePoint[0] << ", "
+                      << stateAtCalo.referencePoint[1] << ", " << stateAtCalo.referencePoint[2] << ") mm: DD4hep Bz "
+                      << bzAtCalo << " T, m_bField " << m_settings.m_bField << " T, relative difference "
+                      << relativeDifference << " (tolerance " << m_settings.m_caloStateFieldTolerance << ") -> "
+                      << (fieldMatches ? "omega converted with m_bField (CopyTrackState)"
+                                       : "|p| from the last hit (CopyTrackStateAtCalorimeter)")
+                      << endmsg;
+
+  if (fieldMatches)
+    this->CopyTrackState(stateAtCalo, inputTrackState);
+  else
+    this->CopyTrackStateAtCalorimeter(stateAtCalo, stateAtLastHit, inputTrackState);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
 DDTrackCreatorBase::Settings::Settings()
     : m_trackCollections(StringVector()), m_kinkVertexCollections(StringVector()),
       m_prongVertexCollections(StringVector()), m_splitVertexCollections(StringVector()),
@@ -582,5 +613,5 @@ DDTrackCreatorBase::Settings::Settings()
       m_curvatureToMomentumFactor(0.3f / 2000.f), m_minTrackECalDistanceFromIp(100.f), m_maxTrackSigmaPOverP(0.15f),
       m_minMomentumForTrackHitChecks(1.f), m_maxBarrelTrackerInnerRDistance(50.f),
       m_minBarrelTrackerHitFractionOfExpected(0.2f), m_minFtdHitsForBarrelTrackerHitFraction(2),
-      m_trackStateTolerance(0.f), m_trackingSystemName("DDKalTest"), m_bField(0.f), m_eCalBarrelInnerSymmetry(0),
+      m_trackStateTolerance(0.f), m_trackingSystemName("DDKalTest"), m_bField(0.f), m_caloStateFieldTolerance(0.01f), m_eCalBarrelInnerSymmetry(0),
       m_eCalBarrelInnerPhi0(0.f), m_eCalBarrelInnerR(0.f), m_eCalEndCapInnerZ(0.f) {}

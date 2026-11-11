@@ -118,6 +118,8 @@ public:
     /// Nikiforos: Moved from main class
 
     float m_bField;                ///< The bfield
+    float m_caloStateFieldTolerance; ///< Max |Bz(calo face) - m_bField| / |m_bField| to convert a calorimeter state's
+                                     ///< omega with m_bField; negative: never (always |p| from the last hit)
     int m_eCalBarrelInnerSymmetry; ///< ECal barrel inner symmetry order
     float m_eCalBarrelInnerPhi0;   ///< ECal barrel inner phi 0
     float m_eCalBarrelInnerR;      ///< ECal barrel inner radius
@@ -333,6 +335,28 @@ protected:
    */
   void CopyTrackStateAtCalorimeter(const edm4hep::TrackState& stateAtCalo, const edm4hep::TrackState& stateForMomentum,
                                    pandora::InputTrackState& inputTrackState) const;
+
+  /**
+   *  @brief  Convert a track state at the calorimeter face, choosing between CopyTrackState and
+   *          CopyTrackStateAtCalorimeter by the DD4hep field at the state's reference point.
+   *
+   *  CopyTrackState converts omega with m_bField, which is correct only where the field used to compute omega equals
+   *  m_bField. If the DD4hep Bz at the face is within m_caloStateFieldTolerance (relative) of m_bField, that holds
+   *  whichever field the tracking used (the two are equal there), and CopyTrackState also keeps the energy lost before
+   *  the face. Otherwise (e.g. a solenoid between tracker and calorimeter: MAIA has Bz = -0.94 T at the ECAL barrel
+   *  face and 0 at the endcap face, against 5 T) CopyTrackStateAtCalorimeter is used, which never reads this omega and
+   *  is valid for any field (a magnetic field cannot change |p|); its only error is the energy lost between the last
+   *  hit and the face. The default tolerance (0.01) is a judgement, not a measured value: the old conversion is the
+   *  more accurate one only while the relative field difference is below that fractional energy loss (of order
+   *  0.01-1 % in the MAIA tracker), so the tolerance should stay small.
+   *
+   *  @param  stateAtCalo the track state at the calorimeter face
+   *  @param  stateAtLastHit the track state at the last hit (momentum magnitude for CopyTrackStateAtCalorimeter)
+   *  @param  inputTrackState the pandora input track state
+   */
+  void CopyTrackStateAtCalorimeterChecked(const edm4hep::TrackState& stateAtCalo,
+                                          const edm4hep::TrackState& stateAtLastHit,
+                                          pandora::InputTrackState& inputTrackState) const;
 
   /**
    *  @brief  Obtain track time when it reaches ECAL

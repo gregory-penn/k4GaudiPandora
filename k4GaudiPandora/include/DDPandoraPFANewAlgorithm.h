@@ -274,6 +274,11 @@ private:
   // Final track quality parameters
   Gaudi::Property<float> m_maxTrackSigmaPOverP{this, "MaxTrackSigmaPOverP", 0.15f,
                                                "Cut on fractional track momentum error"};
+  Gaudi::Property<float> m_caloStateFieldTolerance{
+      this, "CaloStateFieldTolerance", 0.01f,
+      "Max relative difference between the DD4hep Bz at a track state at the calorimeter face and the inner B field "
+      "for which that state's omega is converted with the inner B field; otherwise its momentum magnitude is taken "
+      "from the last-hit state. Negative: always take it from the last-hit state"};
   Gaudi::Property<float> m_minMomentumForTrackHitChecks{
       this, "MinMomentumForTrackHitChecks", 1.0f,
       "Min track momentum required to perform final quality checks on number of hits"};

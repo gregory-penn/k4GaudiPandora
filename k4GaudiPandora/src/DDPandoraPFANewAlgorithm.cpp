@@ -386,6 +386,7 @@ void DDPandoraPFANewAlgorithm::finaliseSteeringParameters() {
   m_trackCreatorSettings.m_curvatureToMomentumFactor = m_curvatureToMomentumFactor;
   m_trackCreatorSettings.m_minTrackECalDistanceFromIp = m_minTrackECalDistanceFromIp;
   m_trackCreatorSettings.m_maxTrackSigmaPOverP = m_maxTrackSigmaPOverP;
+  m_trackCreatorSettings.m_caloStateFieldTolerance = m_caloStateFieldTolerance;
   m_trackCreatorSettings.m_minMomentumForTrackHitChecks = m_minMomentumForTrackHitChecks;
   m_trackCreatorSettings.m_minBarrelTrackerHitFractionOfExpected = m_minBarrelTrackerHitFractionOfExpected;
   m_trackCreatorSettings.m_minFtdHitsForBarrelTrackerHitFraction = m_minFtdHitsForBarrelTrackerHitFraction;
