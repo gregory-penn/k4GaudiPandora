@@ -309,10 +309,12 @@ void DDTrackCreatorBase::GetTrackStates(const edm4hep::Track& pTrack,
   // fg: curling TPC tracks have pointers to track segments stored -> need to get track states from last segment!
   const auto& pEndTrack = pTrack.getTracks().empty() ? pTrack : pTrack.getTracks().back();
 
-  this->CopyTrackState(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtLastHit),
-                       trackParameters.m_trackStateAtEnd);
-  this->CopyTrackState(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtCalorimeter),
-                       trackParameters.m_trackStateAtCalorimeter);
+  const edm4hep::TrackState stateAtLastHit(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtLastHit));
+  this->CopyTrackState(stateAtLastHit, trackParameters.m_trackStateAtEnd);
+  // The omega of the calorimeter state was computed with the field at the calorimeter face, not m_bField: take only
+  // its position and direction, and the momentum magnitude from the last-hit state (see CopyTrackStateAtCalorimeter)
+  this->CopyTrackStateAtCalorimeter(getEDM4hepTrackState(pEndTrack, edm4hep::TrackState::AtCalorimeter), stateAtLastHit,
+                                    trackParameters.m_trackStateAtCalorimeter);
 
   trackParameters.m_isProjectedToEndCap =
       ((std::fabs(trackParameters.m_trackStateAtCalorimeter.Get().GetPosition().GetZ()) < m_settings.m_eCalEndCapInnerZ)
@@ -353,9 +355,12 @@ void DDTrackCreatorBase::GetTrackStatesAtCalo(edm4hep::Track const& track,
   // The extrapolations were done upstream, so every track state at the calorimeter that the input
   // track carries is passed on and pandora is left to choose between them.
   m_algorithm.verbose() << "Passing on " << statesAtCalo.size() << " track state(s) at the calorimeter" << endmsg;
+  // Momentum magnitude from the last-hit state, as in GetTrackStates (same choice of track segment)
+  const auto& endTrack = track.getTracks().empty() ? track : track.getTracks().back();
+  const edm4hep::TrackState stateAtLastHit(getEDM4hepTrackState(endTrack, edm4hep::TrackState::AtLastHit));
   for (const auto& stateAtCalo : statesAtCalo) {
     pandora::InputTrackState pandoraTrackState;
-    this->CopyTrackState(stateAtCalo, pandoraTrackState);
+    this->CopyTrackStateAtCalorimeter(stateAtCalo, stateAtLastHit, pandoraTrackState);
     trackParameters.m_trackStates.push_back(pandoraTrackState);
   }
 #else
@@ -525,6 +530,39 @@ void DDTrackCreatorBase::CopyTrackState(edm4hep::TrackState const& pTrackState,
   const double xs(pTrackState.referencePoint[0]);
   const double ys(pTrackState.referencePoint[1]);
   const double zs(pTrackState.referencePoint[2]);
+
+  inputTrackState = pandora::TrackState(xs, ys, zs, px, py, pz);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void DDTrackCreatorBase::CopyTrackStateAtCalorimeter(const edm4hep::TrackState& stateAtCalo,
+                                                     const edm4hep::TrackState& stateForMomentum,
+                                                     pandora::InputTrackState& inputTrackState) const {
+  // Momentum magnitude from the state inside the tracker, where m_bField applies: p = pT * sqrt(1 + tanLambda^2)
+  const double ptForMomentum(m_settings.m_bField * 2.99792e-4 / std::fabs(stateForMomentum.omega));
+  const double momentum(ptForMomentum * std::sqrt(1. + stateForMomentum.tanLambda * stateForMomentum.tanLambda));
+
+  // Direction from the state at the calorimeter: (cos phi, sin phi, tanLambda) / sqrt(1 + tanLambda^2). phi and
+  // tanLambda do not depend on the field, so they are valid even where omega was computed with zero field.
+  // this all might be a bit overkill; copying pT seems to be fine, but I'll keep the more complex approach
+  // since in principle a radial component of the B-field can slightly change pT but not p
+  const double ptAtCalo(momentum / std::sqrt(1. + stateAtCalo.tanLambda * stateAtCalo.tanLambda));
+  const double px(ptAtCalo * std::cos(stateAtCalo.phi));
+  const double py(ptAtCalo * std::sin(stateAtCalo.phi));
+  const double pz(ptAtCalo * stateAtCalo.tanLambda);
+
+  // Position of the state at the calorimeter: its reference point (D0 = Z0 = 0 there)
+  const double xs(stateAtCalo.referencePoint[0]);
+  const double ys(stateAtCalo.referencePoint[1]);
+  const double zs(stateAtCalo.referencePoint[2]);
+
+  // Debug: the pT the old conversion (CopyTrackState, omega of this state with m_bField) would have given
+  const double oldPt(m_settings.m_bField * 2.99792e-4 / std::fabs(stateAtCalo.omega));
+  m_algorithm.debug() << "Track state at calorimeter (" << xs << ", " << ys << ", " << zs << ") mm: omega "
+                      << stateAtCalo.omega << " /mm, pT from it with " << m_settings.m_bField << " T would be " << oldPt
+                      << " GeV; using |p| " << momentum << " GeV from the state inside the tracker (pT there "
+                      << ptForMomentum << " GeV), pT at the calorimeter " << ptAtCalo << " GeV" << endmsg;
 
   inputTrackState = pandora::TrackState(xs, ys, zs, px, py, pz);
 }

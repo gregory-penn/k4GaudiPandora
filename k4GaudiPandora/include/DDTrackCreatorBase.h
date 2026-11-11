@@ -317,6 +317,24 @@ protected:
   void CopyTrackState(const edm4hep::TrackState& pTrackState, pandora::InputTrackState& inputTrackState) const;
 
   /**
+   *  @brief  Copy a track state at the calorimeter face to a pandora input track state, taking the position and the
+   *          direction (phi, tanLambda) from that state but the momentum magnitude from a state inside the tracker.
+   *
+   *  The omega of a state at the calorimeter face is computed upstream (k4ActsTracking) with the magnetic field at the
+   *  face. Outside the solenoid that field is far from m_bField (about 1 T at the ECAL barrel face of MAIA) or zero
+   *  (ECAL endcap face, omega = 0), so converting it with m_bField, as CopyTrackState does, gives a momentum several
+   *  times too large or an infinite one, which pandora rejects with STATUS_CODE_INVALID_PARAMETER. Between the last
+   *  tracker hit and the calorimeter face only the magnet material changes the momentum magnitude, so the magnitude
+   *  of the momentum at the last hit is used instead.
+   *
+   *  @param  stateAtCalo the track state at the calorimeter face (position and direction)
+   *  @param  stateForMomentum a track state inside the tracker, where m_bField applies (momentum magnitude)
+   *  @param  inputTrackState the pandora input track state
+   */
+  void CopyTrackStateAtCalorimeter(const edm4hep::TrackState& stateAtCalo, const edm4hep::TrackState& stateForMomentum,
+                                   pandora::InputTrackState& inputTrackState) const;
+
+  /**
    *  @brief  Obtain track time when it reaches ECAL
    *
    *  @param  pTrack the lcio track
