@@ -173,6 +173,16 @@ DDPandoraPFANewAlgorithm::operator()(const std::vector<const edm4hep::MCParticle
                                      const std::vector<const edm4hep::CalorimeterHitCollection*>& lhCalCollections,
                                      const std::vector<const edm4hep::CaloHitSimCaloHitLinkCollection*>& caloLinkCollections) const {
   try {
+    // Clear the track creator's per-event bookkeeping when this event goes out
+    // of scope, on the normal and the exception paths alike. It has to happen
+    // here rather than at the top of the next event: m_trackVector holds
+    // edm4hep::Track handles into the input collections, which are only alive
+    // for the duration of this call.
+    // Backported from key4hep/k4GaudiPandora PR #33.
+    struct ResetGuard {
+      const DDPandoraPFANewAlgorithm* self;
+      ~ResetGuard() { self->reset(); }
+    } resetGuard{this};
 
     std::vector<edm4hep::MCParticle> mcParticlesVector;
     for (const auto& mcParticleCollection : MCParticleCollections) {
@@ -268,7 +278,6 @@ DDPandoraPFANewAlgorithm::operator()(const std::vector<const edm4hep::MCParticle
                             m_pfoCreator->CreateParticleFlowObjects(
                                 pClusterCollection, pReconstructedParticleCollection, pStartVertexCollection))
     PANDORA_THROW_RESULT_IF(pandora::STATUS_CODE_SUCCESS, !=, PandoraApi::Reset(m_pPandora))
-    // Reset();
 
     return std::make_tuple(std::move(pClusterCollection), std::move(pReconstructedParticleCollection),
                            std::move(pStartVertexCollection));
