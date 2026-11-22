@@ -105,3 +105,17 @@ add_test(NAME "compare_DDSimpleMuonDigi"
 set_test_env("compare_DDSimpleMuonDigi")
 set_tests_properties("compare_DDSimpleMuonDigi" PROPERTIES DEPENDS "run_DDSimpleMuonDigi")
 
+
+# Theta-energy calibration (from upstream PR #51): a valid EM table loads and the job runs
+add_test(NAME "run_Pandora_thetaEnergy"
+  COMMAND k4run ${PROJECT_SOURCE_DIR}/k4GaudiPandora/options/runPandora.py --IOSvc.Output output_pandora_thetaEnergy.root --PandoraPFANewAlgorithm.ElectromagneticThetaEnergyCorrectionFile ${PROJECT_SOURCE_DIR}/test/inputs/theta_energy_em.json
+)
+set_test_env("run_Pandora_thetaEnergy")
+set_tests_properties("run_Pandora_thetaEnergy" PROPERTIES DEPENDS "run_marlin_wrapper")
+
+# Theta-energy calibration (from upstream PR #51): an EM table given to the hadronic branch stops the job at initialize
+add_test(NAME "run_Pandora_thetaEnergy_wrongBasis"
+  COMMAND k4run ${PROJECT_SOURCE_DIR}/k4GaudiPandora/options/runPandora.py --IOSvc.Output output_pandora_thetaEnergy_wrongBasis.root --PandoraPFANewAlgorithm.HadronicThetaEnergyCorrectionFile ${PROJECT_SOURCE_DIR}/test/inputs/theta_energy_em.json
+)
+set_test_env("run_Pandora_thetaEnergy_wrongBasis")
+set_tests_properties("run_Pandora_thetaEnergy_wrongBasis" PROPERTIES DEPENDS "run_marlin_wrapper" PASS_REGULAR_EXPRESSION "expected \"hadronic\"")
